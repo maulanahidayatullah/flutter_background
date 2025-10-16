@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_background_service_android/flutter_background_service_android.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:intl/intl.dart'; // ✅ Tambahkan untuk format tanggal
 
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
     FlutterLocalNotificationsPlugin();
@@ -18,10 +17,9 @@ void main() async {
 Future<void> initializeService() async {
   final service = FlutterBackgroundService();
 
-  // 🟢 Tambahkan inisialisasi Notification Channel
   const AndroidNotificationChannel channel = AndroidNotificationChannel(
-    'background_service', // id channel
-    'Background Service', // nama channel
+    'background_service',
+    'Background Service',
     description: 'Notifikasi untuk stopwatch background',
     importance: Importance.low,
   );
@@ -49,18 +47,24 @@ Future<void> initializeService() async {
 /// Fungsi utama background
 @pragma('vm:entry-point')
 void onStartService(ServiceInstance service) async {
-  Timer.periodic(const Duration(seconds: 10), (timer) async {
-    final now = DateTime.now();
-    final formatted = DateFormat(
-      'yyyy-MM-dd HH:mm:ss',
-    ).format(now); // ✅ format timestamp
-    service.invoke('update', {"timestamp": formatted});
+  if (service is AndroidServiceInstance) {
+    // 🟥 Jika dapat sinyal "stopService" dari app
+    service.on('stopService').listen((event) {
+      service.stopSelf();
+    });
+  }
 
-    // Update notifikasi biar user tahu stopwatch masih hidup
+  // ⏱️ Kirim timestamp setiap 2 detik
+  Timer.periodic(const Duration(seconds: 2), (timer) async {
+    final timestamp = DateTime.now().toLocal().toString().split(
+      '.',
+    )[0]; // format rapi
+    service.invoke('update', {"timestamp": timestamp});
+
     if (service is AndroidServiceInstance) {
       service.setForegroundNotificationInfo(
         title: 'Stopwatch Aktif',
-        content: 'Terakhir update: $formatted',
+        content: 'Terakhir update: $timestamp',
       );
     }
   });
@@ -80,26 +84,36 @@ class _MyAppState extends State<MyApp> {
   @override
   void initState() {
     super.initState();
+    _checkServiceStatus();
 
-    // Listener untuk menerima data dari service
     FlutterBackgroundService().on('update').listen((event) {
       if (event?['timestamp'] != null) {
         setState(() {
-          // ✅ Masukkan data terbaru di urutan pertama
+          // data terbaru di atas
           _timestamps.insert(0, event!['timestamp']);
         });
       }
     });
   }
 
+  Future<void> _checkServiceStatus() async {
+    final service = FlutterBackgroundService();
+    final running = await service.isRunning();
+    setState(() {
+      _isRunning = running;
+    });
+  }
+
   Future<void> _startStopwatch() async {
     final service = FlutterBackgroundService();
     final isRunning = await service.isRunning();
+
     if (!isRunning) {
       await service.startService();
-      setState(() {
-        _isRunning = true;
-      });
+      setState(() => _isRunning = true);
+    } else {
+      service.invoke('stopService');
+      setState(() => _isRunning = false);
     }
   }
 
@@ -122,7 +136,7 @@ class _MyAppState extends State<MyApp> {
               padding: const EdgeInsets.all(16),
               child: ElevatedButton(
                 onPressed: _startStopwatch,
-                child: Text(_isRunning ? 'Running...' : 'Start Stopwatch'),
+                child: Text(_isRunning ? 'Stop Stopwatch' : 'Start Stopwatch'),
               ),
             ),
           ],
